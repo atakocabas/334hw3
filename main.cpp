@@ -5,7 +5,7 @@
 #include "ext2fs_print.h"
 #include <vector>
 
-#define SUPERBLOCK_BYTE 1024
+#define SUPERBLOCK_BYTE_OFFSET 1024
 
 std::ifstream ext2_image;
 ext2_super_block super_block;
@@ -21,12 +21,12 @@ void read_image(std::string image_path){
 }
 
 void read_superblock() {
-    ext2_image.seekg(SUPERBLOCK_BYTE, std::ios::beg);
+    ext2_image.seekg(SUPERBLOCK_BYTE_OFFSET, std::ios::beg);
     ext2_image.read((char*)&super_block, sizeof(super_block));
 }
 
 void read_group_descriptor(){
-    ext2_image.seekg(SUPERBLOCK_BYTE + sizeof(ext2_super_block), std::ios::beg);
+    ext2_image.seekg(SUPERBLOCK_BYTE_OFFSET + sizeof(ext2_super_block), std::ios::beg);
     ext2_image.read((char*)&group_descriptor, sizeof(ext2_block_group_descriptor));
 }
 
