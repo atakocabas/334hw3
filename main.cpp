@@ -7,12 +7,16 @@
 #include <math.h>
 
 #define SUPERBLOCK_BYTE_OFFSET 1024
+const uint32_t ROOT_INODE = 2;
+const uint16_t EXT2_S_IFDIR = 0x4000;
 
 std::ifstream ext2_image;
 ext2_super_block super_block;
 ext2_block_group_descriptor group_descriptor;
 std::vector<std::string> path_vector;
 unsigned int block_size;
+unsigned char* block_bitmap;
+unsigned char* inode_bitmap;
 
 void read_image(std::string image_path){
     ext2_image.open(image_path, std::ios::binary);
@@ -32,11 +36,6 @@ void read_group_descriptor(){
     ext2_image.read((char*)&group_descriptor, sizeof(ext2_block_group_descriptor));
 }
 
-void read_inode(ext2_inode* inode, int index) {
-    // TODO: read the inode from the corresponding index into the inode
-
-}
-
 void path_tokenizer(std::string path) {
     // TODO: tokenize the path, then put into path vector
     std::string temp = "";
@@ -54,7 +53,7 @@ void path_tokenizer(std::string path) {
 }
 
 void calculate_block_size() {
-    block_size = 1024 * (pow(2, super_block.log_block_size));
+    block_size = 1024 << super_block.log_block_size;
 }
 
 bool check_path_exist(){
@@ -65,6 +64,26 @@ bool check_path_exist(){
 ext2_inode* get_parent_inode() {
     // TODO: get the parent inode
     return NULL;
+}
+
+ext2_inode* get_inode(int index) {
+    // TODO: get the inode of given index
+    ext2_inode* res = new ext2_inode;
+    unsigned int offset = (1024 + (group_descriptor.inode_table - 1) * block_size) + (index - 1) * sizeof(ext2_inode);
+    ext2_image.seekg(offset, std::ios::beg);
+    ext2_image.read((char*) res, sizeof(ext2_inode));
+    return res;
+}
+
+void read_bitmaps() {
+    block_bitmap = new unsigned char[block_size];
+    inode_bitmap = new unsigned char[block_size];
+
+    ext2_image.seekg(1024 + (group_descriptor.block_bitmap - 1) * block_size, std::ios::beg);
+    ext2_image.read((char*)block_bitmap, block_size);
+
+    ext2_image.seekg(1024 + (group_descriptor.inode_bitmap - 1) * block_size, std::ios::beg);
+    ext2_image.read((char*)inode_bitmap, block_size);
 }
 
 int main(int argc, char const *argv[])
@@ -79,11 +98,11 @@ int main(int argc, char const *argv[])
     read_group_descriptor();
     if(command == "inode"){
         // TODO: print the inode
-        ext2_inode* tmp_inode = new ext2_inode;
-        // read_inode(tmp_inode, (int) argv[3]);
-    } else if (command == "superblock") {
+        ext2_inode* tmp_inode = get_inode(atoi(argv[3]));
+        print_inode(tmp_inode, atoi(argv[3]));
+    } else if (command == "super") {
         print_super_block(&super_block);
-    } else if(command == "groupdescriptor"){
+    } else if(command == "group"){
         print_group_descriptor(&group_descriptor);
     }else if (command == "mkdir") {
         // TODO: mkdir
