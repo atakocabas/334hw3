@@ -59,7 +59,7 @@ int main(int argc, char const *argv[])
     } else if (command == "mkdir") {
         // TODO: mkdir
         path_tokenizer(argv[3]);
-        if(!check_path_exist()){
+        if(check_path_exist()){
             std::cout << "PATH ALREADY EXISTS!" << std::endl;
             return -1;
         }
