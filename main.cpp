@@ -4,6 +4,7 @@
 #include "ext2fs.h"
 #include "ext2fs_print.h"
 #include <vector>
+#include <math.h>
 
 #define SUPERBLOCK_BYTE_OFFSET 1024
 
@@ -11,6 +12,7 @@ std::ifstream ext2_image;
 ext2_super_block super_block;
 ext2_block_group_descriptor group_descriptor;
 std::vector<std::string> path_vector;
+unsigned int block_size;
 
 void read_image(std::string image_path){
     ext2_image.open(image_path, std::ios::binary);
@@ -26,7 +28,7 @@ void read_superblock() {
 }
 
 void read_group_descriptor(){
-    ext2_image.seekg(SUPERBLOCK_BYTE_OFFSET + sizeof(ext2_super_block), std::ios::beg);
+    ext2_image.seekg(block_size, std::ios::beg);
     ext2_image.read((char*)&group_descriptor, sizeof(ext2_block_group_descriptor));
 }
 
@@ -51,6 +53,10 @@ void path_tokenizer(std::string path) {
     }
 }
 
+void calculate_block_size() {
+    block_size = 1024 * (pow(2, super_block.log_block_size));
+}
+
 bool check_path_exist(){
     // TODO: check if path vector exist
     return false;
@@ -69,6 +75,7 @@ int main(int argc, char const *argv[])
 
     read_image(image_path);
     read_superblock();
+    calculate_block_size();
     read_group_descriptor();
     if(command == "inode"){
         // TODO: print the inode
