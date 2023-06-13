@@ -37,7 +37,18 @@ void read_inode(ext2_inode* inode, int index) {
 
 void path_tokenizer(std::string path) {
     // TODO: tokenize the path, then put into path vector
-    std::string token = path.substr(0, path.find("/"));
+    std::string temp = "";
+    for(auto e: path) {
+        if(e == '/'){
+            if(temp != ""){
+                path_vector.push_back(temp);
+            }
+            temp = "";
+            continue;
+        } else {
+            temp += e;
+        }
+    }
 }
 
 bool check_path_exist(){
