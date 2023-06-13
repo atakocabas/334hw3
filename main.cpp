@@ -5,8 +5,11 @@
 #include "ext2fs_print.h"
 #include <vector>
 
+#define SUPERBLOCK_BYTE 1024
+
 std::ifstream ext2_image;
 ext2_super_block super_block;
+ext2_block_group_descriptor group_descriptor;
 std::vector<std::string> path_vector;
 
 void read_image(std::string image_path){
@@ -18,8 +21,13 @@ void read_image(std::string image_path){
 }
 
 void read_superblock() {
-    ext2_image.seekg(1024, std::ios::beg);
+    ext2_image.seekg(SUPERBLOCK_BYTE, std::ios::beg);
     ext2_image.read((char*)&super_block, sizeof(super_block));
+}
+
+void read_group_descriptor(){
+    ext2_image.seekg(SUPERBLOCK_BYTE + sizeof(ext2_super_block), std::ios::beg);
+    ext2_image.read((char*)&group_descriptor, sizeof(ext2_block_group_descriptor));
 }
 
 void read_inode(ext2_inode* inode, int index) {
@@ -49,14 +57,17 @@ int main(int argc, char const *argv[])
     std::string command = argv[2];
 
     read_image(image_path);
+    read_superblock();
+    read_group_descriptor();
     if(command == "inode"){
         // TODO: print the inode
         ext2_inode* tmp_inode = new ext2_inode;
-        read_inode(tmp_inode, (int) argv[3]);
+        // read_inode(tmp_inode, (int) argv[3]);
     } else if (command == "superblock") {
-        read_superblock();
         print_super_block(&super_block);
-    } else if (command == "mkdir") {
+    } else if(command == "groupdescriptor"){
+        print_group_descriptor(&group_descriptor);
+    }else if (command == "mkdir") {
         // TODO: mkdir
         path_tokenizer(argv[3]);
         if(check_path_exist()){
