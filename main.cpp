@@ -6,7 +6,6 @@
 #include <vector>
 #include <math.h>
 
-#define SUPERBLOCK_BYTE_OFFSET 1024
 const uint32_t ROOT_INODE = 2;
 const uint16_t EXT2_S_IFDIR = 0x4000;
 
@@ -27,7 +26,7 @@ void read_image(std::string image_path){
 }
 
 void read_superblock() {
-    ext2_image.seekg(SUPERBLOCK_BYTE_OFFSET, std::ios::beg);
+    ext2_image.seekg(1024, std::ios::beg);
     ext2_image.read((char*)&super_block, sizeof(super_block));
 }
 
