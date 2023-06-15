@@ -1,12 +1,4 @@
-#include <iostream>
-#include <string.h>
-#include <fstream>
-#include "ext2fs.h"
-#include "ext2fs_print.h"
-#include <vector>
-#include <math.h>
-#include <sys/stat.h>
-#include <algorithm>
+#include "main.h"
 
 
 std::ifstream ext2_image;
@@ -81,15 +73,29 @@ std::vector<ext2_dir_entry*> get_path_dirs(ext2_inode* inode) {
     return dirs;
 }
 
+ext2_dir_entry* find_in_dirs(std::string name, std::vector<ext2_dir_entry*> dirs) {
+    for(auto dir: dirs) {
+        if(dir->name == name.c_str()) return dir;
+    }
+    return NULL;
+}
+
 bool check_path_exists(){
     // TODO: check if path vector exist
-    ext2_inode root_inode;
-    ext2_image.seekg(GET_BLOCK_OFFSET(group_descriptor.inode_table) + (EXT2_ROOT_INODE - 1) * super_block.inode_size, std::ios::beg);
-    ext2_image.read((char*)&root_inode, sizeof(ext2_inode));
+    ext2_inode* root_inode = get_inode(EXT2_ROOT_INODE);
     
     for(auto p: path_vector) {
-        std::vector<ext2_dir_entry*> dirs = get_path_dirs(&root_inode);
-        
+        std::vector<ext2_dir_entry*> dirs = get_path_dirs(root_inode);
+        if(path_vector[path_vector.size()-1] == p){
+            if(find_in_dirs(p, dirs) != NULL) return true;
+            else return false;
+        } else {
+            ext2_dir_entry* curr_dir = find_in_dirs(p, dirs);
+            if(curr_dir != NULL) {
+                root_inode = get_inode(curr_dir->inode);
+                continue;
+            } else return false;
+        }
     }
     
     return false;
