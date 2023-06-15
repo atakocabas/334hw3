@@ -75,7 +75,9 @@ std::vector<ext2_dir_entry*> get_path_dirs(ext2_inode* inode) {
 
 ext2_dir_entry* find_in_dirs(std::string name, std::vector<ext2_dir_entry*> dirs) {
     for(auto dir: dirs) {
-        if(dir->name == name.c_str()) return dir;
+        std::cout << dir->name << " " << name.c_str() << std::endl;
+        std::cout << strcmp(dir->name, name.c_str()) << std::endl;
+        if(strcmp(dir->name, name.c_str()) == 0) return dir;
     }
     return NULL;
 }
