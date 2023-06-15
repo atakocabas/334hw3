@@ -59,21 +59,21 @@ void path_tokenizer(std::string path) {
     }
 }
 
-std::vector<ext2_dir_entry> get_path_dirs(ext2_inode* inode) {
-    std::vector<ext2_dir_entry> dirs;
-    ext2_dir_entry* tmp = new ext2_dir_entry;
+std::vector<ext2_dir_entry*> get_path_dirs(ext2_inode* inode) {
+    std::vector<ext2_dir_entry*> dirs;
     unsigned int size = 0;
 
     while(size < inode->size) {
         unsigned int offset = GET_BLOCK_OFFSET(inode->direct_blocks[0]) + size;
+        ext2_dir_entry* tmp = new ext2_dir_entry;
         ext2_image.seekg(offset, std::ios::beg);
         ext2_image.read((char*)tmp, sizeof(ext2_dir_entry));
 
         ext2_image.seekg(offset + sizeof(ext2_dir_entry), std::ios::beg);
         ext2_image.read((char*) tmp->name, tmp->name_length + 1);
-        print_dir_entry(tmp, tmp->name);
+        // print_dir_entry(tmp, tmp->name);
         if(tmp->file_type == EXT2_D_DTYPE){
-            dirs.push_back(*tmp);
+            dirs.push_back(tmp);
         }
         size += tmp->length;
     }
@@ -88,8 +88,8 @@ bool check_path_exists(){
     ext2_image.read((char*)&root_inode, sizeof(ext2_inode));
     
     for(auto p: path_vector) {
-        std::vector<ext2_dir_entry> dirs = get_path_dirs(&root_inode);
-        // print_dir_entry(&dirs[0], dirs[0].name);
+        std::vector<ext2_dir_entry*> dirs = get_path_dirs(&root_inode);
+        
     }
     
     return false;
