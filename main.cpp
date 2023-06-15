@@ -5,29 +5,37 @@
 #include "ext2fs_print.h"
 #include <vector>
 #include <math.h>
+#include <sys/stat.h>
+#include <algorithm>
 
-const uint32_t ROOT_INODE = 2;
-const uint16_t EXT2_S_IFDIR = 0x4000;
 
 std::ifstream ext2_image;
 ext2_super_block super_block;
 ext2_block_group_descriptor group_descriptor;
 std::vector<std::string> path_vector;
 unsigned int block_size;
+unsigned int inode_size;
 unsigned char* block_bitmap;
 unsigned char* inode_bitmap;
+#define GET_BLOCK_OFFSET(block) ((block)*block_size)
 
 void read_image(std::string image_path){
     ext2_image.open(image_path, std::ios::binary);
 
     if(!ext2_image.is_open()) {
         std::cout << "COULD NOT OPEN THE IMAGE FILE!" << std::endl;
+        exit(14);
     }
 }
 
 void read_superblock() {
-    ext2_image.seekg(1024, std::ios::beg);
+    ext2_image.seekg(EXT2_SUPER_BLOCK_POSITION, std::ios::beg);
     ext2_image.read((char*)&super_block, sizeof(super_block));
+    if(EXT2_SUPER_MAGIC != super_block.magic){
+        std::cout << "MAGIC DOES NOT MATCH!" << std::endl;
+        exit(1);
+    }
+    block_size = EXT2_UNLOG(super_block.log_block_size);
 }
 
 void read_group_descriptor(){
@@ -51,12 +59,39 @@ void path_tokenizer(std::string path) {
     }
 }
 
-void calculate_block_size() {
-    block_size = 1024 << super_block.log_block_size;
+std::vector<ext2_dir_entry> get_path_dirs(ext2_inode* inode) {
+    std::vector<ext2_dir_entry> dirs;
+    ext2_dir_entry* tmp = new ext2_dir_entry;
+    unsigned int size = 0;
+
+    while(size < inode->size) {
+        unsigned int offset = GET_BLOCK_OFFSET(inode->direct_blocks[0]) + size;
+        ext2_image.seekg(offset, std::ios::beg);
+        ext2_image.read((char*)tmp, sizeof(ext2_dir_entry));
+
+        ext2_image.seekg(offset + sizeof(ext2_dir_entry), std::ios::beg);
+        ext2_image.read((char*) tmp->name, tmp->name_length + 1);
+        print_dir_entry(tmp, tmp->name);
+        if(tmp->file_type == EXT2_D_DTYPE){
+            dirs.push_back(*tmp);
+        }
+        size += tmp->length;
+    }
+
+    return dirs;
 }
 
-bool check_path_exist(){
+bool check_path_exists(){
     // TODO: check if path vector exist
+    ext2_inode root_inode;
+    ext2_image.seekg(GET_BLOCK_OFFSET(group_descriptor.inode_table) + (EXT2_ROOT_INODE - 1) * super_block.inode_size, std::ios::beg);
+    ext2_image.read((char*)&root_inode, sizeof(ext2_inode));
+    
+    for(auto p: path_vector) {
+        std::vector<ext2_dir_entry> dirs = get_path_dirs(&root_inode);
+        // print_dir_entry(&dirs[0], dirs[0].name);
+    }
+    
     return false;
 }
 
@@ -68,7 +103,7 @@ ext2_inode* get_parent_inode() {
 ext2_inode* get_inode(int index) {
     // TODO: get the inode of given index
     ext2_inode* res = new ext2_inode;
-    unsigned int offset = (1024 + (group_descriptor.inode_table - 1) * block_size) + (index - 1) * sizeof(ext2_inode);
+    unsigned int offset = GET_BLOCK_OFFSET(group_descriptor.inode_table) + (index - 1) * super_block.inode_size;
     ext2_image.seekg(offset, std::ios::beg);
     ext2_image.read((char*) res, sizeof(ext2_inode));
     return res;
@@ -78,10 +113,10 @@ void read_bitmaps() {
     block_bitmap = new unsigned char[block_size];
     inode_bitmap = new unsigned char[block_size];
 
-    ext2_image.seekg(1024 + (group_descriptor.block_bitmap - 1) * block_size, std::ios::beg);
+    ext2_image.seekg(GET_BLOCK_OFFSET(group_descriptor.block_bitmap), std::ios::beg);
     ext2_image.read((char*)block_bitmap, block_size);
 
-    ext2_image.seekg(1024 + (group_descriptor.inode_bitmap - 1) * block_size, std::ios::beg);
+    ext2_image.seekg(GET_BLOCK_OFFSET(group_descriptor.inode_bitmap), std::ios::beg);
     ext2_image.read((char*)inode_bitmap, block_size);
 }
 
@@ -93,26 +128,34 @@ int main(int argc, char const *argv[])
 
     read_image(image_path);
     read_superblock();
-    calculate_block_size();
     read_group_descriptor();
     if(command == "inode"){
         // TODO: print the inode
         ext2_inode* tmp_inode = get_inode(atoi(argv[3]));
         print_inode(tmp_inode, atoi(argv[3]));
+        free(tmp_inode);
     } else if (command == "super") {
         print_super_block(&super_block);
     } else if(command == "group"){
         print_group_descriptor(&group_descriptor);
     }else if (command == "mkdir") {
         // TODO: mkdir
+        if(argc < 4){
+            std::cout << "DO NOT FORGET TO ADD THE PATH!" << std::endl;
+            exit(1);
+        }
         path_tokenizer(argv[3]);
-        if(check_path_exist()){
+        if(check_path_exists()){
             std::cout << "PATH ALREADY EXISTS!" << std::endl;
-            return -1;
+            exit(1);
         }
 
         ext2_inode* parent_inode = get_parent_inode();
 
     }
+
+    free(inode_bitmap);
+    free(block_bitmap);
+    ext2_image.close();
     return 0;
 }
