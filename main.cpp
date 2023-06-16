@@ -1,7 +1,7 @@
 #include "main.h"
 
 
-std::ifstream ext2_image;
+std::fstream ext2_image;
 ext2_super_block super_block;
 ext2_block_group_descriptor group_descriptor;
 std::vector<std::string> path_vector;
@@ -14,7 +14,7 @@ unsigned int curr_inode_id;
 #define GET_BLOCK_OFFSET(block) ((block)*block_size)
 
 void read_image(std::string image_path){
-    ext2_image.open(image_path, std::ios::binary);
+    ext2_image.open(image_path, std::fstream::in | std::fstream::out);
 
     if(!ext2_image.is_open()) {
         std::cout << "COULD NOT OPEN THE IMAGE FILE!" << std::endl;
@@ -127,7 +127,6 @@ ext2_inode* get_parent_inode(ext2_inode* inode) {
     ext2_dir_entry* parent_dir_entry = new ext2_dir_entry;
     ext2_image.seekg(offset, std::ios::beg);
     ext2_image.read((char*)parent_dir_entry, sizeof(ext2_dir_entry));
-    print_inode(get_inode(parent_dir_entry->inode), parent_dir_entry->inode);
     return get_inode(parent_dir_entry->inode);
 }
 
@@ -151,23 +150,51 @@ void read_bitmaps() {
     ext2_image.read((char*)inode_bitmap, block_size);
 }
 
-unsigned int find_first_empty_index(){
+unsigned int find_first_empty_inode_index(){
     for(unsigned int i=0; i < block_size; ++i) {
         unsigned char byte = inode_bitmap[i];
         for(int j=0; j < 8; j++){
             bool inodeUsed = byte & (1 << j);
-            if(inodeUsed) {
-                std::cout << i * 8 + j << " bit is used!" << std::endl;
+            if(!inodeUsed) {
+                return i*8+j+1;
             }
         }
     }
     return 0;
 }
 
-ext2_inode* allocate_inode() {
-    unsigned int first_empty_index = find_first_empty_index();
-    return NULL;
+ext2_inode* allocate_inode(unsigned int empty_inode_index) {
+    ext2_inode* empty_inode = get_inode(empty_inode_index);
+    return empty_inode;
 }
+
+int allocate_block() {
+    for(uint32_t i=0; i < block_size; ++i) {
+        unsigned char byte = block_bitmap[i];
+        for(uint32_t j=0; j < 8; ++j) {
+            bool blockUsed = byte & (1 << j);
+            if(!blockUsed){
+                return i*8+j;
+            }
+        }
+    }
+    return -1;
+}
+
+ext2_dir_entry* create_dir_entry(const std::string& name, uint32_t inode_index){
+    size_t name_length = name.length();
+    size_t entry_size = sizeof(ext2_dir_entry) + name_length;
+    if(entry_size < 12) entry_size = 12;
+    ext2_dir_entry* new_dir_entry = (ext2_dir_entry*)malloc(entry_size);
+    
+    new_dir_entry->inode = inode_index;
+    new_dir_entry->name_length = static_cast<uint8_t>(name_length);
+    new_dir_entry->length = static_cast<uint16_t>(entry_size);
+    new_dir_entry->file_type = EXT2_D_DTYPE;
+    memcpy(new_dir_entry->name, name.c_str(), name_length+1);
+    return new_dir_entry;
+}
+
 int main(int argc, char const *argv[])
 {
     if(argc < 2) return -1;
@@ -182,6 +209,8 @@ int main(int argc, char const *argv[])
         // TODO: print the inode
         ext2_inode* tmp_inode = get_inode(atoi(argv[3]));
         print_inode(tmp_inode, atoi(argv[3]));
+        print_dir_entries(2);
+        delete tmp_inode;
     } else if (command == "super") {
         print_super_block(&super_block);
     } else if(command == "group"){
@@ -200,11 +229,27 @@ int main(int argc, char const *argv[])
 
         ext2_inode* parent_inode = curr_inode;
         unsigned int parent_inode_id = curr_inode_id;
-        print_inode(get_inode(41), 41);
-        print_dir_entries(41);
-        ext2_inode* new_inode = allocate_inode();
-    }
+        unsigned int new_inode_index = find_first_empty_inode_index();
+        ext2_inode* new_inode = allocate_inode(new_inode_index);
+        int empty_block_index = allocate_block();
+        std::cout << empty_block_index << std::endl;
+        if(empty_block_index == -1){
+            std::cout << "COULD NOT ALLOCATED A BLOCK!" << std::endl;
+            exit(1);
+        }
 
+        new_inode->direct_blocks[0] = empty_block_index;
+        new_inode->mode = EXT2_I_DTYPE + EXT2_I_DPERM;
+        ext2_dir_entry* new_dir_entry = create_dir_entry(path_vector[path_vector.size()-1], new_inode_index);
+        ext2_dir_entry* dot_entry = create_dir_entry(".", new_inode_index);
+        ext2_dir_entry* dotdot_entry = create_dir_entry("..", parent_inode_id);
+        std::vector<ext2_dir_entry*> dirs;
+        dirs.push_back(dot_entry);
+        dirs.push_back(dotdot_entry);
+        dirs.push_back(new_dir_entry);
+
+
+    }
     ext2_image.close();
     return 0;
 }
