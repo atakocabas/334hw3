@@ -183,8 +183,7 @@ int allocate_block() {
 
 ext2_dir_entry* create_dir_entry(const std::string& name, uint32_t inode_index){
     size_t name_length = name.length();
-    size_t entry_size = sizeof(ext2_dir_entry) + name_length;
-    if(entry_size < 12) entry_size = 12;
+    size_t entry_size = sizeof(ext2_dir_entry) + name_length + 4 - name_length % 4;
     ext2_dir_entry* new_dir_entry = (ext2_dir_entry*)malloc(entry_size);
     
     new_dir_entry->inode = inode_index;
@@ -195,6 +194,143 @@ ext2_dir_entry* create_dir_entry(const std::string& name, uint32_t inode_index){
     return new_dir_entry;
 }
 
+void write_inode_to_img(ext2_inode* inode, unsigned int id) {
+    unsigned int offset = GET_BLOCK_OFFSET(group_descriptor.inode_table) + (id - 1) * super_block.inode_size;
+    ext2_image.seekp(offset, std::ios::beg);
+    ext2_image.write((char*) inode, sizeof(ext2_inode));
+}
+
+void write_dir_to_parent_dirs(ext2_dir_entry* dir, ext2_inode* parent) {
+    std::vector<ext2_dir_entry*> parent_dirs = get_path_dirs(parent);
+    unsigned int total_parent_dirs_size = 0;
+    for(size_t i=0; i < parent_dirs.size() - 1; ++i){
+        total_parent_dirs_size += parent_dirs[i]->length;
+    }
+    unsigned int last_new_size = parent_dirs[parent_dirs.size()-1]->name_length + (4 - parent_dirs[parent_dirs.size()-1]->name_length % 4) + 8;
+    total_parent_dirs_size += last_new_size;
+    parent_dirs[parent_dirs.size()-1]->length = last_new_size;
+    dir->length = block_size - total_parent_dirs_size;
+    parent_dirs.push_back(dir);
+
+    unsigned int size = 0;
+    unsigned int index = 0;
+    while(size < parent->size) {
+        unsigned int offset = GET_BLOCK_OFFSET(parent->direct_blocks[0]) + size;
+        ext2_image.seekp(offset, std::ios::beg);
+        ext2_image.write((char*)parent_dirs[index], parent_dirs[index]->length);
+        size += parent_dirs[index]->length;
+        index++;
+    }
+
+}
+
+void write_self_dirs(std::vector<ext2_dir_entry*> dirs, ext2_inode* self, unsigned int id){
+    unsigned int offset = GET_BLOCK_OFFSET(self->direct_blocks[0]);
+    ext2_image.seekp(offset, std::ios::beg);
+    ext2_image.write((char*)dirs[0], dirs[0]->length);
+
+    offset += dirs[0]->length;
+
+    ext2_image.seekp(offset, std::ios::beg);
+    ext2_image.write((char*)dirs[1], dirs[1]->length);
+}
+
+void update_time_parent_to_root(unsigned int parent_id){
+    time_t t;
+    ext2_inode* tmp = get_inode(parent_id);
+    tmp->modification_time = time(&t);
+    tmp->access_time = t;
+    unsigned int offset = GET_BLOCK_OFFSET(group_descriptor.inode_table) + (parent_id-1) * super_block.inode_size;
+    ext2_image.seekp(offset, std::ios::beg);
+    ext2_image.write((char*)tmp, sizeof(ext2_inode));
+
+    while(true) {
+        std::vector<ext2_dir_entry*> dirs = get_path_dirs(tmp);
+        if(dirs[1]->inode == parent_id) break;
+        parent_id = dirs[1]->inode;
+        tmp = get_inode(parent_id);
+        tmp->modification_time = t;
+        tmp->access_time = t;
+        offset = GET_BLOCK_OFFSET(group_descriptor.inode_bitmap) + (parent_id - 1) * super_block.inode_size;
+        ext2_image.seekp(offset, std::ios::beg);
+        ext2_image.write((char*)tmp, sizeof(ext2_inode));
+    }
+}
+
+void update_bitmaps(){
+    bool flag = true;
+    for(unsigned int i=0; i < block_size || flag; ++i) {
+        unsigned char byte = inode_bitmap[i];
+        for(int j=0; j < 8 || flag; j++){
+            bool inodeUsed = byte & (1 << j);
+            if(!inodeUsed) {
+                inode_bitmap[i] = byte | (1 << j);
+                flag = false;
+            }
+        }
+    }
+
+    ext2_image.seekp(GET_BLOCK_OFFSET(group_descriptor.inode_bitmap), std::ios::beg);
+    ext2_image.write((char*)inode_bitmap, block_size);
+
+    flag = true;
+    for(unsigned int i=0; i < block_size || flag; ++i){
+        unsigned char byte = block_bitmap[i];
+        for(unsigned int j=0; j < 8 || flag; ++j){
+            bool blockUsed = byte & (1 << j);
+            if(!blockUsed){
+                block_bitmap[i] = byte | (1 << j);
+                flag = false;
+            }
+        }
+    }
+}
+
+ext2_inode* find_inode_in_dirs(std::vector<ext2_dir_entry*> dirs, std::string name){
+    for(auto dir: dirs){
+        if(strcmp(dir->name, name.c_str()) == 0) {
+            return get_inode(dir->inode);
+        }
+    }
+    return NULL;
+}
+
+ext2_inode* check_rmdir_path_exists(){
+    ext2_inode* tmp_inode = get_inode(EXT2_ROOT_INODE);
+    for(size_t i=0; i < path_vector.size(); ++i){
+        std::vector<ext2_dir_entry*> dirs = get_path_dirs(tmp_inode);
+        if(path_vector[path_vector.size()-1] == path_vector[i]){
+            ext2_inode* tmp = find_inode_in_dirs(dirs, path_vector[i]);
+            if(tmp != NULL) {
+                std::vector<ext2_dir_entry*> tmp_dirs = get_path_dirs(tmp);
+                if(tmp_dirs.size() > 2) {
+                    std::cout << "DIRECTORY IS NOT EMPTY!" << std::endl;
+                    exit(1);
+                } else {
+                    return tmp;
+                }
+            } else {
+                std::cout << "COULD NOT FIND THE PATH!" << std::endl;
+                exit(1);
+            }
+        } else {
+            ext2_inode* tmp = find_inode_in_dirs(dirs, path_vector[i]);
+            if(tmp != NULL){
+                tmp_inode = tmp;
+            } else {
+                std::cout << "COULD NOT FIND PATH!" << std::endl;
+                exit(1);
+            }
+        }
+   }
+
+   return NULL;
+}
+
+unsigned int get_inode_id(ext2_inode* inode) {
+    std::vector<ext2_dir_entry*> dirs = get_path_dirs(inode);
+    return dirs[0]->inode;
+}
 int main(int argc, char const *argv[])
 {
     if(argc < 2) return -1;
@@ -215,7 +351,7 @@ int main(int argc, char const *argv[])
         print_super_block(&super_block);
     } else if(command == "group"){
         print_group_descriptor(&group_descriptor);
-    }else if (command == "mkdir") {
+    } else if (command == "mkdir") {
         // TODO: mkdir
         if(argc < 4){
             std::cout << "DO NOT FORGET TO ADD THE PATH!" << std::endl;
@@ -232,7 +368,6 @@ int main(int argc, char const *argv[])
         unsigned int new_inode_index = find_first_empty_inode_index();
         ext2_inode* new_inode = allocate_inode(new_inode_index);
         int empty_block_index = allocate_block();
-        std::cout << empty_block_index << std::endl;
         if(empty_block_index == -1){
             std::cout << "COULD NOT ALLOCATED A BLOCK!" << std::endl;
             exit(1);
@@ -240,15 +375,36 @@ int main(int argc, char const *argv[])
 
         new_inode->direct_blocks[0] = empty_block_index;
         new_inode->mode = EXT2_I_DTYPE + EXT2_I_DPERM;
+        new_inode->gid = EXT2_I_GID;
+        new_inode->size = block_size;
+        time_t t;
+        new_inode->access_time = time(&t);
+        new_inode->creation_time = t;
+        new_inode->modification_time = t;
+        new_inode->uid = EXT2_I_UID;
+        new_inode->link_count = 1;
+        new_inode->block_count_512 = 8;
         ext2_dir_entry* new_dir_entry = create_dir_entry(path_vector[path_vector.size()-1], new_inode_index);
         ext2_dir_entry* dot_entry = create_dir_entry(".", new_inode_index);
         ext2_dir_entry* dotdot_entry = create_dir_entry("..", parent_inode_id);
+        dotdot_entry->length = block_size - 12;
         std::vector<ext2_dir_entry*> dirs;
         dirs.push_back(dot_entry);
         dirs.push_back(dotdot_entry);
-        dirs.push_back(new_dir_entry);
 
-
+        write_inode_to_img(new_inode, new_inode_index);
+        write_dir_to_parent_dirs(new_dir_entry, parent_inode);
+        write_self_dirs(dirs, new_inode, new_inode_index);
+        update_bitmaps();
+    } else if(command == "rmdir") {
+        if(argc < 4){
+            std::cout << "DO NOT FORGET TO ADD THE PATH!" << std::endl;
+            exit(1);
+        }
+        path_tokenizer(argv[3]);
+        ext2_inode* rm_inode = check_rmdir_path_exists();
+        unsigned int rm_inode_id = get_inode_id(rm_inode);
+        print_inode(rm_inode, rm_inode_id);
     }
     ext2_image.close();
     return 0;
