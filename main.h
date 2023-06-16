@@ -9,3 +9,7 @@
 #include <algorithm>
 
 ext2_inode* get_inode(int);
+
+ext2_inode* allocate_inode();
+
+unsigned int find_first_empty_index();
