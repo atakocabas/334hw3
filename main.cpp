@@ -222,7 +222,7 @@ void write_dir_to_parent_dirs(ext2_dir_entry* dir, ext2_inode* parent) {
         size += parent_dirs[index]->length;
         index++;
     }
-
+    std::cout << "EXT2_ALLOC_ENTRY " << "\""<< path_vector[path_vector.size()-1] << "\"" << parent->direct_blocks[0] << std::endl;
 }
 
 void write_self_dirs(std::vector<ext2_dir_entry*> dirs, ext2_inode* self, unsigned int id){
@@ -345,7 +345,7 @@ unsigned int get_inode_id(ext2_inode* inode) {
 void unlink_parent_inode(ext2_inode* parent, std::string name) {
     std::vector<ext2_dir_entry*> dirs = get_path_dirs(parent);
     // FIND THE CORRECT DIR ENTRY TO DELETE
-    std::cout << "EXT2_FREE_ENTRY " << "\"" << name << "\"" << parent->direct_blocks[0] << std::endl;
+    std::cout << "EXT2_FREE_ENTRY " << "\"" << name << "\" " << parent->direct_blocks[0] << std::endl;
     for(size_t i=0; i < dirs.size(); ++i) {
         if(strcmp(dirs[i]->name, name.c_str()) == 0) {
             std::cout << "EXT2_FREE_INODE " << dirs[i]->inode << std::endl;
@@ -411,7 +411,6 @@ ext2_inode* check_rm_path_exists() {
     ext2_inode* tmp_inode = get_inode(EXT2_ROOT_INODE);
     for(size_t i=0; i < path_vector.size(); ++i) {
         std::vector<ext2_dir_entry*> dirs = get_path_dirs(tmp_inode);
-        print_dir_entries(dirs);
         if(i == path_vector.size()-1){
             ext2_inode* tmp = find_inode_in_dirs(dirs, path_vector[i]);
             if(tmp != NULL && (tmp->mode & EXT2_I_FTYPE) == EXT2_I_FTYPE){
@@ -547,8 +546,10 @@ int main(int argc, char const *argv[])
         ext2_inode* parent_inode = curr_inode;
         unsigned int parent_inode_id = curr_inode_id;
         unsigned int new_inode_index = find_first_empty_inode_index();
+        std::cout << "EXT2_ALLOC_INODE " << new_inode_index << std::endl;
         ext2_inode* new_inode = allocate_inode(new_inode_index);
         int empty_block_index = allocate_block();
+        std::cout << "EXT2_ALLOC_BLOCK " <<empty_block_index << std::endl;
         if(empty_block_index == -1){
             std::cout << "COULD NOT ALLOCATED A BLOCK!" << std::endl;
             exit(1);
@@ -568,6 +569,8 @@ int main(int argc, char const *argv[])
         ext2_dir_entry* new_dir_entry = create_dir_entry(path_vector[path_vector.size()-1], new_inode_index);
         ext2_dir_entry* dot_entry = create_dir_entry(".", new_inode_index);
         ext2_dir_entry* dotdot_entry = create_dir_entry("..", parent_inode_id);
+        std::cout << "EXT2_ALLOC_ENTRY " << "." << empty_block_index << std::endl;
+        std::cout << "EXT2_ALLOC_ENTRY " << ".." << empty_block_index << std::endl;
         dotdot_entry->length = block_size - 12;
         std::vector<ext2_dir_entry*> dirs;
         dirs.push_back(dot_entry);
@@ -577,6 +580,7 @@ int main(int argc, char const *argv[])
         write_dir_to_parent_dirs(new_dir_entry, parent_inode);
         write_self_dirs(dirs, new_inode, new_inode_index);
         update_bitmaps();
+        write_bitmaps();
     } else if(command == "rmdir") {
         if(argc < 4){
             std::cout << "DO NOT FORGET TO ADD THE PATH!" << std::endl;
@@ -610,7 +614,7 @@ int main(int argc, char const *argv[])
         unlink_parent_inode(parent_inode, path_vector[path_vector.size()-1]);
         unlink_all_block_under_inode(rm_inode);
         unlink_file_inode(rm_inode, rm_inode_id);
-
+        update_time_parent_to_root(parent_inode_id);
         write_bitmaps();
     }
     ext2_image.close();
