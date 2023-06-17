@@ -304,12 +304,12 @@ ext2_inode* find_inode_in_dirs(std::vector<ext2_dir_entry*> dirs, std::string na
     return NULL;
 }
 
-ext2_inode* check_rmdir_path_exists(){
+ext2_inode* check_rmdir_path_exists(std::vector<std::string> path){
     ext2_inode* tmp_inode = get_inode(EXT2_ROOT_INODE);
-    for(size_t i=0; i < path_vector.size(); ++i){
+    for(size_t i=0; i < path.size(); ++i){
         std::vector<ext2_dir_entry*> dirs = get_path_dirs(tmp_inode);
-        if(path_vector[path_vector.size()-1] == path_vector[i]){
-            ext2_inode* tmp = find_inode_in_dirs(dirs, path_vector[i]);
+        if(path[path.size()-1] == path[i]){
+            ext2_inode* tmp = find_inode_in_dirs(dirs, path[i]);
             if(tmp != NULL) {
                 std::vector<ext2_dir_entry*> tmp_dirs = get_path_dirs(tmp);
                 if(tmp_dirs.size() > 2) {
@@ -324,7 +324,7 @@ ext2_inode* check_rmdir_path_exists(){
                 exit(1);
             }
         } else {
-            ext2_inode* tmp = find_inode_in_dirs(dirs, path_vector[i]);
+            ext2_inode* tmp = find_inode_in_dirs(dirs, path[i]);
             if(tmp != NULL && (tmp->mode & EXT2_I_DTYPE) == EXT2_I_DTYPE){
                 tmp_inode = tmp;
             } else {
@@ -433,6 +433,84 @@ ext2_inode* check_rm_path_exists() {
     return NULL;
 }
 
+unsigned int get_inode_id_in_dirs(std::vector<ext2_dir_entry*> dirs, std::string name){
+    for(auto dir: dirs) {
+        if(strcmp(dir->name, name.c_str()) == 0){
+            return dir->inode;
+        }
+    }
+    return 0;
+}
+
+unsigned int get_file_inode_id() {
+    ext2_inode* tmp_inode = get_inode(EXT2_ROOT_INODE);
+    for(size_t i=0; i < path_vector.size(); ++i) {
+        std::vector<ext2_dir_entry*> dirs = get_path_dirs(tmp_inode);
+        if(i == path_vector.size()-1) {
+            return get_inode_id_in_dirs(dirs, path_vector.at(i));
+        } else {
+            ext2_inode* tmp = find_inode_in_dirs(dirs, path_vector[i]);
+            if(tmp != NULL && (tmp->mode & EXT2_I_DTYPE) == EXT2_I_DTYPE) {
+                tmp_inode = tmp;
+            } else {
+                exit(1);
+            }
+        }
+    }
+    return 0;
+}
+
+ext2_inode* get_file_parent_inode(std::vector<std::string> path){
+    path.erase(path.end() + 0);
+    ext2_inode* tmp_inode = get_inode(EXT2_ROOT_INODE);
+    for(size_t i=0; i < path.size(); ++i){
+        std::vector<ext2_dir_entry*> dirs = get_path_dirs(tmp_inode);
+        if(i == path.size()-1){
+            ext2_inode* tmp = find_inode_in_dirs(dirs, path[i]);
+            if(tmp != NULL && (tmp->mode & EXT2_I_DTYPE) == EXT2_I_DTYPE){
+                return tmp;
+            } else exit(1);
+        } else {
+            ext2_inode* tmp = find_inode_in_dirs(dirs, path[i]);
+            if(tmp != NULL && (tmp->mode & EXT2_I_DTYPE) == EXT2_I_DTYPE){
+                tmp_inode = tmp;
+            } else {
+                exit(1);
+            }
+        }
+    }
+    return NULL;
+}
+
+void unlink_all_block_under_inode(ext2_inode* inode) {
+    for(size_t i=0; i < EXT2_NUM_DIRECT_BLOCKS; ++i){
+        deallocate_block_bitmap(inode->direct_blocks[i]);
+        std::cout << "EXT2_FREE_BLOCK " << inode->direct_blocks[i] << std::endl; 
+    }
+
+    uint32_t* indirect_blocks = new uint32_t[EXT2_NUM_DIRECT_BLOCKS];
+    unsigned int offset = GET_BLOCK_OFFSET(inode->single_indirect);
+    ext2_image.seekg(offset, std::ios::beg);
+    ext2_image.read((char*)indirect_blocks, sizeof(uint32_t) * EXT2_NUM_DIRECT_BLOCKS);
+
+    for(size_t i=0; i < EXT2_NUM_DIRECT_BLOCKS; ++i){
+        deallocate_block_bitmap(inode->direct_blocks[i]);
+        std::cout << "EXT2_FREE_BLOCK " << inode->direct_blocks[i] << std::endl; 
+    }
+
+}
+
+void unlink_file_inode(ext2_inode* inode, unsigned int inode_id){
+    inode->link_count--;
+
+    if(inode->link_count == 0){
+        deallocate_inode_bitmap(inode_id);
+    }
+    
+    unsigned int offset = GET_BLOCK_OFFSET(group_descriptor.inode_table) + (inode_id - 1) * super_block.inode_size;
+    ext2_image.seekp(offset, std::ios::beg);
+    ext2_image.write((char*)inode, sizeof(ext2_inode));
+}
 
 int main(int argc, char const *argv[])
 {
@@ -505,7 +583,7 @@ int main(int argc, char const *argv[])
             exit(1);
         }
         path_tokenizer(argv[3]);
-        ext2_inode* rm_inode = check_rmdir_path_exists();
+        ext2_inode* rm_inode = check_rmdir_path_exists(path_vector);
         unsigned int rm_inode_id = get_inode_id(rm_inode);
         print_inode(rm_inode, rm_inode_id);
         ext2_inode* parent_inode = get_parent_inode(rm_inode);
@@ -524,7 +602,16 @@ int main(int argc, char const *argv[])
         path_tokenizer(argv[3]);
 
         ext2_inode* rm_inode = check_rm_path_exists();
-        std::vector<ext2_dir_entry*> dirs = get_path_dirs(rm_inode);
+        unsigned int rm_inode_id = get_file_inode_id();
+
+        ext2_inode* parent_inode = get_file_parent_inode(path_vector);
+        unsigned int parent_inode_id = get_inode_id(parent_inode);
+
+        unlink_parent_inode(parent_inode, path_vector[path_vector.size()-1]);
+        unlink_all_block_under_inode(rm_inode);
+        unlink_file_inode(rm_inode, rm_inode_id);
+
+        write_bitmaps();
     }
     ext2_image.close();
     return 0;
