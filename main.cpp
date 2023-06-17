@@ -74,7 +74,7 @@ std::vector<ext2_dir_entry*> get_path_dirs(ext2_inode* inode) {
     return dirs;
 }
 
-ext2_dir_entry* find_in_dirs(std::string name, std::vector<ext2_dir_entry*> dirs) {
+ext2_dir_entry* get_in_dirs(std::string name, std::vector<ext2_dir_entry*> dirs) {
     for(auto dir: dirs) {
         if(strcmp(dir->name, name.c_str()) == 0) return dir;
     }
@@ -90,7 +90,7 @@ bool check_path_exists(){
         std::vector<ext2_dir_entry*> dirs = get_path_dirs(root_inode);
         root_inode_id = dirs[0]->inode;
         if(path_vector[path_vector.size()-1] == path_vector[i]){
-            if(find_in_dirs(path_vector[i], dirs) != NULL) {
+            if(get_in_dirs(path_vector[i], dirs) != NULL) {
                 res = false;
                 break;
             }
@@ -99,7 +99,7 @@ bool check_path_exists(){
                 break;
             }
         } else {
-            ext2_dir_entry* curr_dir = find_in_dirs(path_vector[i], dirs);
+            ext2_dir_entry* curr_dir = get_in_dirs(path_vector[i], dirs);
             if(curr_dir != NULL) {
                 root_inode = get_inode(curr_dir->inode);
             } else {
@@ -121,13 +121,16 @@ void print_dir_entries(unsigned int index) {
     }
 }
 
+void print_dir_entries(std::vector<ext2_dir_entry*> dirs) {
+    for(auto dir: dirs) {
+        print_dir_entry(dir, dir->name);
+    }
+}
+
 ext2_inode* get_parent_inode(ext2_inode* inode) {
     // TODO: get the parent inode
-    unsigned int offset = GET_BLOCK_OFFSET(inode->direct_blocks[0]) + 12;
-    ext2_dir_entry* parent_dir_entry = new ext2_dir_entry;
-    ext2_image.seekg(offset, std::ios::beg);
-    ext2_image.read((char*)parent_dir_entry, sizeof(ext2_dir_entry));
-    return get_inode(parent_dir_entry->inode);
+    std::vector<ext2_dir_entry*> dirs = get_path_dirs(inode);
+    return get_inode(dirs[1]->inode);
 }
 
 ext2_inode* get_inode(int index) {
@@ -257,6 +260,14 @@ void update_time_parent_to_root(unsigned int parent_id){
     }
 }
 
+void write_bitmaps() {
+    ext2_image.seekp(GET_BLOCK_OFFSET(group_descriptor.inode_bitmap), std::ios::beg);
+    ext2_image.write((char*)inode_bitmap, block_size);
+
+    ext2_image.seekp(GET_BLOCK_OFFSET(group_descriptor.block_bitmap), std::ios::beg);
+    ext2_image.write((char*)block_bitmap, block_size);
+}
+
 void update_bitmaps(){
     bool flag = true;
     for(unsigned int i=0; i < block_size || flag; ++i) {
@@ -270,8 +281,6 @@ void update_bitmaps(){
         }
     }
 
-    ext2_image.seekp(GET_BLOCK_OFFSET(group_descriptor.inode_bitmap), std::ios::beg);
-    ext2_image.write((char*)inode_bitmap, block_size);
 
     flag = true;
     for(unsigned int i=0; i < block_size || flag; ++i){
@@ -284,6 +293,8 @@ void update_bitmaps(){
             }
         }
     }
+
+    write_bitmaps();
 }
 
 ext2_inode* find_inode_in_dirs(std::vector<ext2_dir_entry*> dirs, std::string name){
@@ -331,6 +342,63 @@ unsigned int get_inode_id(ext2_inode* inode) {
     std::vector<ext2_dir_entry*> dirs = get_path_dirs(inode);
     return dirs[0]->inode;
 }
+
+void unlink_parent_inode(ext2_inode* parent, std::string name) {
+    std::vector<ext2_dir_entry*> dirs = get_path_dirs(parent);
+    // FIND THE CORRECT DIR ENTRY TO DELETE
+    for(size_t i=0; i < dirs.size(); ++i) {
+        if(strcmp(dirs[i]->name, name.c_str()) == 0) {
+            dirs.erase(dirs.begin() + i);
+            break;
+        }
+    }
+    // CALCULATE NEW DIR ENTRY SIZES
+    unsigned int total_size = 0;
+    for(size_t i=0; i < dirs.size(); ++i) {
+        if(i == dirs.size() - 1) {
+            dirs[i]->length = block_size - total_size;
+        } else {
+            dirs[i]->length = dirs[i]->name_length + (4 - dirs[i]->name_length % 4) + 8;
+            total_size += dirs[i]->length;
+        }
+    }
+    // WRITE NEW DIR ENTRIES TO IMAGE
+    unsigned int size = 0;
+    unsigned int index = 0;
+    while(size < parent->size) {
+        unsigned int offset = GET_BLOCK_OFFSET(parent->direct_blocks[0]) + size;
+        ext2_image.seekp(offset, std::ios::beg);
+        ext2_image.write((char*)dirs[index], dirs[index]->length);
+        size += dirs[index]->length;
+        index++;
+    }
+}
+
+void deallocate_inode_bitmap(unsigned int inode_id) {
+    unsigned int byte = (inode_id-1) / 9;
+    unsigned int bit = (inode_id-1) % 9;
+
+    inode_bitmap[byte] = inode_bitmap[byte] & ((0xff) ^ (1 << bit));
+}
+
+void deallocate_block_bitmap(unsigned int block_id) {
+    unsigned int byte = block_id / 9;
+    unsigned int bit = block_id % 9;
+
+    block_bitmap[byte] = block_bitmap[byte] & ((0xff) ^ (1 << bit));
+}
+
+void unlink_inode(ext2_inode* inode) {
+    inode->link_count = 0;
+
+    deallocate_inode_bitmap(get_inode_id(inode));
+    deallocate_block_bitmap(inode->direct_blocks[0]);
+
+    unsigned int offset = GET_BLOCK_OFFSET(group_descriptor.inode_table) + (get_inode_id(inode) - 1) * super_block.inode_size;
+    ext2_image.seekp(offset, std::ios::beg);
+    ext2_image.write((char*)inode, sizeof(ext2_inode));
+}
+
 int main(int argc, char const *argv[])
 {
     if(argc < 2) return -1;
@@ -405,6 +473,14 @@ int main(int argc, char const *argv[])
         ext2_inode* rm_inode = check_rmdir_path_exists();
         unsigned int rm_inode_id = get_inode_id(rm_inode);
         print_inode(rm_inode, rm_inode_id);
+        ext2_inode* parent_inode = get_parent_inode(rm_inode);
+        unsigned int parent_inode_id = get_inode_id(parent_inode);
+        unlink_parent_inode(parent_inode, path_vector[path_vector.size()-1]);
+
+        unlink_inode(rm_inode);
+        update_time_parent_to_root(parent_inode_id);
+        write_bitmaps();
+
     }
     ext2_image.close();
     return 0;
