@@ -65,9 +65,7 @@ std::vector<ext2_dir_entry*> get_path_dirs(ext2_inode* inode) {
 
         ext2_image.seekg(offset + sizeof(ext2_dir_entry), std::ios::beg);
         ext2_image.read((char*) tmp->name, tmp->name_length + 1);
-        if(tmp->file_type == EXT2_D_DTYPE){
-            dirs.push_back(tmp);
-        }
+        dirs.push_back(tmp);
         size += tmp->length;
     }
 
@@ -317,16 +315,17 @@ ext2_inode* check_rmdir_path_exists(){
                 if(tmp_dirs.size() > 2) {
                     std::cout << "DIRECTORY IS NOT EMPTY!" << std::endl;
                     exit(1);
-                } else {
-                    return tmp;
-                }
+                } else if ((tmp->mode & EXT2_I_DTYPE) != EXT2_I_DTYPE){
+                    std::cout << "IT IS NOT A DIRECTORY!" << std::endl;
+                    exit(1);
+                } else return tmp;
             } else {
                 std::cout << "COULD NOT FIND THE PATH!" << std::endl;
                 exit(1);
             }
         } else {
             ext2_inode* tmp = find_inode_in_dirs(dirs, path_vector[i]);
-            if(tmp != NULL){
+            if(tmp != NULL && (tmp->mode & EXT2_I_DTYPE) == EXT2_I_DTYPE){
                 tmp_inode = tmp;
             } else {
                 std::cout << "COULD NOT FIND PATH!" << std::endl;
@@ -346,8 +345,10 @@ unsigned int get_inode_id(ext2_inode* inode) {
 void unlink_parent_inode(ext2_inode* parent, std::string name) {
     std::vector<ext2_dir_entry*> dirs = get_path_dirs(parent);
     // FIND THE CORRECT DIR ENTRY TO DELETE
+    std::cout << "EXT2_FREE_ENTRY " << "\"" << name << "\"" << parent->direct_blocks[0] << std::endl;
     for(size_t i=0; i < dirs.size(); ++i) {
         if(strcmp(dirs[i]->name, name.c_str()) == 0) {
+            std::cout << "EXT2_FREE_INODE " << dirs[i]->inode << std::endl;
             dirs.erase(dirs.begin() + i);
             break;
         }
@@ -372,6 +373,12 @@ void unlink_parent_inode(ext2_inode* parent, std::string name) {
         size += dirs[index]->length;
         index++;
     }
+
+    parent->link_count -= 1;
+
+    unsigned int offset = GET_BLOCK_OFFSET(group_descriptor.inode_table) + (get_inode_id(parent) - 1) * super_block.inode_size;
+    ext2_image.seekp(offset, std::ios::beg);
+    ext2_image.write((char*)parent, sizeof(ext2_inode));
 }
 
 void deallocate_inode_bitmap(unsigned int inode_id) {
@@ -394,10 +401,38 @@ void unlink_inode(ext2_inode* inode) {
     deallocate_inode_bitmap(get_inode_id(inode));
     deallocate_block_bitmap(inode->direct_blocks[0]);
 
+
     unsigned int offset = GET_BLOCK_OFFSET(group_descriptor.inode_table) + (get_inode_id(inode) - 1) * super_block.inode_size;
     ext2_image.seekp(offset, std::ios::beg);
     ext2_image.write((char*)inode, sizeof(ext2_inode));
 }
+
+ext2_inode* check_rm_path_exists() {
+    ext2_inode* tmp_inode = get_inode(EXT2_ROOT_INODE);
+    for(size_t i=0; i < path_vector.size(); ++i) {
+        std::vector<ext2_dir_entry*> dirs = get_path_dirs(tmp_inode);
+        print_dir_entries(dirs);
+        if(i == path_vector.size()-1){
+            ext2_inode* tmp = find_inode_in_dirs(dirs, path_vector[i]);
+            if(tmp != NULL && (tmp->mode & EXT2_I_FTYPE) == EXT2_I_FTYPE){
+                return tmp;
+            } else {
+                std::cout << "FILE IS NOT DIR OR FILE CANNOT BE FOUND!" << std::endl;
+                exit(1);
+            }
+        } else {
+            ext2_inode* tmp = find_inode_in_dirs(dirs, path_vector[i]);
+            if(tmp != NULL && (tmp->mode & EXT2_I_DTYPE) == EXT2_I_DTYPE){
+                tmp_inode = tmp;
+            } else {
+                std::cout << "CANNOT FIND PATH!" << std::endl;
+                exit(1);
+            }
+        }
+    }
+    return NULL;
+}
+
 
 int main(int argc, char const *argv[])
 {
@@ -481,6 +516,15 @@ int main(int argc, char const *argv[])
         update_time_parent_to_root(parent_inode_id);
         write_bitmaps();
 
+    } else if(command == "rm") {
+        if(argc < 4) {
+            std::cout << "DO NOT FORGET TO ADD THE PATH!" << std::endl;
+            exit(1);
+        }
+        path_tokenizer(argv[3]);
+
+        ext2_inode* rm_inode = check_rm_path_exists();
+        std::vector<ext2_dir_entry*> dirs = get_path_dirs(rm_inode);
     }
     ext2_image.close();
     return 0;
